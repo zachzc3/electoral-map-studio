@@ -848,6 +848,26 @@ function renderAll(){
   else { renderSenateLeft(); renderSenateCenter(); renderSenateRight(); }
 }
 
+/* ============================== THEME ============================== */
+function applyTheme(theme){
+  document.documentElement.setAttribute("data-theme", theme);
+  document.querySelectorAll("#themeToggle .tab-btn").forEach(b=>{
+    b.classList.toggle("active", b.dataset.themeChoice===theme);
+  });
+  try{ localStorage.setItem("electoral_studio_theme", theme); }catch(e){}
+}
+function initTheme(){
+  let theme;
+  try{ theme = localStorage.getItem("electoral_studio_theme"); }catch(e){}
+  if(!theme) theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  applyTheme(theme);
+  document.getElementById("themeToggle").addEventListener("click", e=>{
+    const b = e.target.closest("[data-theme-choice]"); if(!b) return;
+    applyTheme(b.dataset.themeChoice);
+  });
+}
+
+initTheme();
 if(!loadSaved()) initDefaults();
 renderAll();
 })();
