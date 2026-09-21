@@ -446,13 +446,19 @@ function renderMapView(c){
     labelLayer.appendChild(text);
   });
 
-  // Congressional-district insets (Maine's 2nd, Nebraska's 2nd) — the only two districts a
-  // typical map draws separately, since the rest always match their state's own color.
+  // Congressional-district insets (Maine's 2nd, Nebraska's 2nd) — drawn only when that district's
+  // winner actually differs from its state's own at-large winner (same rule a real results map
+  // uses: no need to call out a district that already matches the color it's sitting on).
   Object.entries(SPLIT_INSET).forEach(([stateAbbr, inset])=>{
+    if(included[stateAbbr]===false) return;
+    const districtWinner = districtAssign[inset.district] || SPLIT_DISTRICTS[stateAbbr].districts.find(d=>d.abbr===inset.district).winner;
+    const stateWinner = assignments[stateAbbr] && assignments[stateAbbr].party;
+    if(districtWinner === stateWinner) return;
+
     const circle = document.createElementNS(SVG_NS,"circle");
     circle.setAttribute("cx",inset.cx); circle.setAttribute("cy",inset.cy); circle.setAttribute("r",inset.r);
     circle.setAttribute("class","district-inset");
-    const p = partyOf(districtAssign[inset.district] || SPLIT_DISTRICTS[stateAbbr].districts.find(d=>d.abbr===inset.district).winner);
+    const p = partyOf(districtWinner);
     if(p) circle.style.fill = p.color;
     const dTitle = document.createElementNS(SVG_NS,"title");
     dTitle.textContent = `${inset.district} — 1 EV (congressional district)`;
