@@ -35,12 +35,12 @@ const STATES = [
  ["Wisconsin","WI",10,8,"R",[1,1,0]],["Wyoming","WY",3,1,"R",[0,2,0]],
  ["District of Columbia","DC",3,0,"D",[0,0,0]]
 ];
-// Maine/Nebraska: 2 at-large EV tied to the statewide winner, plus 1 EV per congressional district that can split off.
-// Shown as a separate callout list (same convention your own reference map used) since a blank US map SVG has
-// no congressional-district boundaries to draw them on top of.
-const SPLIT_DISTRICTS = {
-  ME: {stateEv:2, districts:[{abbr:"ME-1",winner:"D"},{abbr:"ME-2",winner:"R"}]},
-  NE: {stateEv:2, districts:[{abbr:"NE-1",winner:"R"},{abbr:"NE-2",winner:"D"},{abbr:"NE-3",winner:"R"}]}
+// Maine/Nebraska really do this: 2 at-large EV tied to the statewide winner, plus 1 EV per
+// congressional district that can split off. This is also the seed data for "Reset to Real
+// 2024 Result" — any OTHER state's district split is a user toggle, see districtStates below.
+const DEFAULT_DISTRICTS = {
+  ME: {atLargeEv:2, districts:[{id:"ME-1",ev:1,winner:"D"},{id:"ME-2",ev:1,winner:"R"}]},
+  NE: {atLargeEv:2, districts:[{id:"NE-1",ev:1,winner:"R"},{id:"NE-2",ev:1,winner:"D"},{id:"NE-3",ev:1,winner:"R"}]}
 };
 const MAP_VIEWBOX = "0 0 1020 593";
 // Hand-placed label positions (and, for the 9 small Northeast states, a combined "XX N"
@@ -65,12 +65,21 @@ const LABEL_POS = {
   MA:{x:927,y:164,callout:true}, MD:{x:883,y:305,callout:true}, NH:{x:800,y:58,callout:true},
   NJ:{x:898,y:260,callout:true}, RI:{x:925,y:199,callout:true}, VT:{x:790,y:82,callout:true},
 };
-// The two congressional districts that visually diverge from their state's own color in a
-// typical 2024 map — drawn as a small inset circle right on the shape, same as the reference.
+// Hand-placed inset spot for the one district the reference map actually draws a circle for
+// (real 2024 had exactly one divergent district per state). Any OTHER divergent district —
+// ME-1, NE-1, NE-3, or a district on a state you've toggled districts on for — has no curated
+// spot, so it falls back to a small computed position offset from that state's own label.
 const SPLIT_INSET = {
-  ME:{district:"ME-2", cx:889, cy:66, r:14, labelX:880, labelY:75},
-  NE:{district:"NE-2", cx:457, cy:236, r:14, labelX:448, labelY:245},
+  "ME-2": {cx:889, cy:66, r:14, labelX:880, labelY:75},
+  "NE-2": {cx:457, cy:236, r:14, labelX:448, labelY:245},
 };
+function fallbackInsetPos(stateAbbr, districtIndex){
+  const base = LABEL_POS[stateAbbr];
+  if(!base) return {cx:0,cy:0,r:10,labelX:0,labelY:4};
+  const angle = districtIndex * 2.4; // spread multiple fallback insets apart visually
+  const cx = base.x + 26 + Math.cos(angle)*16, cy = base.y - 20 + Math.sin(angle)*16;
+  return {cx, cy, r:11, labelX:cx-6, labelY:cy+4};
+}
 // One path, drawn once, containing every small-state leader line as its own subpath.
 const LEADER_LINES_D = "m844 62 13 29m-25-5 8 17m49 50 34 3m-41 22 41 12m-57-6 51 33m-72 13 50 22m-58-2 51 26m-55-15 46 33m-79-43 61 61";
 
@@ -90,7 +99,7 @@ let electionMeta = {
 let presidentView = "map"; // "map" | "summary"
 let brushStrength = "safe";
 let assignments = {};    // abbr -> {party, strength}
-let districtAssign = {}; // "ME-1" etc -> partyId
+let districtStates = {}; // abbr -> {atLargeEv, districts:[{id, ev, winner}]} — any state can opt in
 let evOverrides = {};
 let included = {};
 let selectedState = null;
@@ -100,6 +109,10 @@ let senateAssign = {};
 const STRENGTHS = ["safe","likely","lean","tilt"];
 const STRENGTH_LABEL = {safe:"Safe",likely:"Likely",lean:"Lean",tilt:"Tilt"};
 
+function cloneDefaultDistricts(){
+  return JSON.parse(JSON.stringify(DEFAULT_DISTRICTS));
+}
+
 function initDefaults(){
   STATES.forEach(s=>{
     const abbr=s[1], winner=s[4];
@@ -107,9 +120,7 @@ function initDefaults(){
     included[abbr] = true;
     houseAssign[abbr] = winner;
   });
-  Object.values(SPLIT_DISTRICTS).forEach(sd=>{
-    sd.districts.forEach(d=>{ districtAssign[d.abbr] = d.winner; });
-  });
+  districtStates = cloneDefaultDistricts();
   STATES.forEach(s=>{
     const abbr=s[1], makeup=s[5];
     const seats=[];
@@ -125,7 +136,8 @@ function loadSaved(){
     const raw = localStorage.getItem("electoral_studio_v2");
     if(!raw) return false;
     const d = JSON.parse(raw);
-    parties=d.parties; assignments=d.assignments; districtAssign=d.districtAssign||{};
+    parties=d.parties; assignments=d.assignments;
+    districtStates = d.districtStates || cloneDefaultDistricts();
     evOverrides=d.evOverrides; included=d.included; houseAssign=d.houseAssign; senateAssign=d.senateAssign;
     // backward-compatible: older saves won't have these fields yet
     parties.forEach(p=>{
@@ -140,11 +152,13 @@ function loadSaved(){
 }
 function save(){
   try{
-    localStorage.setItem("electoral_studio_v2", JSON.stringify({parties,assignments,districtAssign,evOverrides,included,houseAssign,senateAssign,electionMeta}));
+    localStorage.setItem("electoral_studio_v2", JSON.stringify({parties,assignments,districtStates,evOverrides,included,houseAssign,senateAssign,electionMeta}));
   }catch(e){}
 }
 
 function evOf(abbr){
+  const split = districtStates[abbr];
+  if(split) return split.atLargeEv + split.districts.reduce((sum,d)=>sum+d.ev, 0);
   const s = STATES.find(x=>x[1]===abbr);
   return evOverrides[abbr] != null ? evOverrides[abbr] : s[2];
 }
@@ -261,13 +275,12 @@ function computeTally(mode){
     STATES.forEach(s=>{
       const abbr=s[1];
       if(!included[abbr]) return;
-      const split = SPLIT_DISTRICTS[abbr];
+      const split = districtStates[abbr];
       if(split){
         const a = assignments[abbr];
-        if(a && totals[a.party]!=null){ totals[a.party]+=split.stateEv; grandTotal+=split.stateEv; }
+        if(a && totals[a.party]!=null){ totals[a.party]+=split.atLargeEv; grandTotal+=split.atLargeEv; }
         split.districts.forEach(d=>{
-          const p = districtAssign[d.abbr] || d.winner;
-          if(totals[p]!=null){ totals[p]+=1; grandTotal+=1; }
+          if(totals[d.winner]!=null){ totals[d.winner]+=d.ev; grandTotal+=d.ev; }
         });
       } else {
         const ev = evOf(abbr);
@@ -348,7 +361,7 @@ function renderPresidentLeft(){
   reset.className="reset-btn"; reset.textContent="Reset to Real 2024 Result";
   reset.addEventListener("click", ()=>{
     STATES.forEach(s=>{ assignments[s[1]] = {party:s[4], strength:"safe"}; });
-    Object.values(SPLIT_DISTRICTS).forEach(sd=>{ sd.districts.forEach(d=>{ districtAssign[d.abbr]=d.winner; }); });
+    districtStates = cloneDefaultDistricts();
     save(); renderAll();
   });
   wrap.appendChild(reset);
@@ -446,50 +459,55 @@ function renderMapView(c){
     labelLayer.appendChild(text);
   });
 
-  // Congressional-district insets (Maine's 2nd, Nebraska's 2nd) — drawn only when that district's
-  // winner actually differs from its state's own at-large winner (same rule a real results map
-  // uses: no need to call out a district that already matches the color it's sitting on).
-  Object.entries(SPLIT_INSET).forEach(([stateAbbr, inset])=>{
+  // Congressional-district insets — drawn for ANY district (on ANY state with districts turned
+  // on) whose winner actually differs from its state's own at-large winner, same rule a real
+  // results map uses: no need to call out a district that already matches the color it sits on.
+  // ME-2/NE-2 use the reference map's own hand-placed spot; anything else falls back to a small
+  // computed position near that state's label, since no curated spot exists for it.
+  Object.entries(districtStates).forEach(([stateAbbr, split])=>{
     if(included[stateAbbr]===false) return;
-    const districtWinner = districtAssign[inset.district] || SPLIT_DISTRICTS[stateAbbr].districts.find(d=>d.abbr===inset.district).winner;
     const stateWinner = assignments[stateAbbr] && assignments[stateAbbr].party;
-    if(districtWinner === stateWinner) return;
+    let fallbackI = 0;
+    split.districts.forEach(d=>{
+      if(d.winner === stateWinner) return;
+      const inset = SPLIT_INSET[d.id] || fallbackInsetPos(stateAbbr, fallbackI++);
 
-    const circle = document.createElementNS(SVG_NS,"circle");
-    circle.setAttribute("cx",inset.cx); circle.setAttribute("cy",inset.cy); circle.setAttribute("r",inset.r);
-    circle.setAttribute("class","district-inset");
-    const p = partyOf(districtWinner);
-    if(p) circle.style.fill = p.color;
-    const dTitle = document.createElementNS(SVG_NS,"title");
-    dTitle.textContent = `${inset.district} — 1 EV (congressional district)`;
-    circle.appendChild(dTitle);
-    circle.addEventListener("click", ()=>{ districtAssign[inset.district]=nextPartyId(districtAssign[inset.district]); save(); renderAll(); });
-    circle.addEventListener("contextmenu", e=>{ e.preventDefault(); delete districtAssign[inset.district]; save(); renderAll(); });
-    svg.appendChild(circle);
-    const dLabel = document.createElementNS(SVG_NS,"text");
-    dLabel.setAttribute("x",inset.labelX); dLabel.setAttribute("y",inset.labelY);
-    dLabel.setAttribute("class","ev-label district-inset-label");
-    dLabel.textContent = "1";
-    labelLayer.appendChild(dLabel);
+      const circle = document.createElementNS(SVG_NS,"circle");
+      circle.setAttribute("cx",inset.cx); circle.setAttribute("cy",inset.cy); circle.setAttribute("r",inset.r);
+      circle.setAttribute("class","district-inset");
+      const p = partyOf(d.winner);
+      if(p) circle.style.fill = p.color;
+      const dTitle = document.createElementNS(SVG_NS,"title");
+      dTitle.textContent = `${d.id} — ${d.ev} EV (congressional district)`;
+      circle.appendChild(dTitle);
+      circle.addEventListener("click", ()=>{ d.winner=nextPartyId(d.winner); save(); renderAll(); });
+      circle.addEventListener("contextmenu", e=>{ e.preventDefault(); d.winner=stateWinner; save(); renderAll(); });
+      svg.appendChild(circle);
+      const dLabel = document.createElementNS(SVG_NS,"text");
+      dLabel.setAttribute("x",inset.labelX); dLabel.setAttribute("y",inset.labelY);
+      dLabel.setAttribute("class","ev-label district-inset-label");
+      dLabel.textContent = d.ev;
+      labelLayer.appendChild(dLabel);
+    });
   });
 
   svg.appendChild(labelLayer);
   wrap.appendChild(svg);
   c.appendChild(wrap);
 
-  // Split-vote controls (Maine / Nebraska congressional districts) — full editable list;
-  // only ME-2/NE-2 also get a visual inset on the map above, same as a typical results map.
+  // Split-vote controls — full editable chip list for every district on every state that
+  // currently has districts turned on; only the ones that diverge also get a map inset above.
   const splitRow = document.createElement("div"); splitRow.className="split-votes";
-  Object.entries(SPLIT_DISTRICTS).forEach(([stateAbbr, sd])=>{
+  Object.entries(districtStates).forEach(([stateAbbr, sd])=>{
     sd.districts.forEach(d=>{
-      const p = partyOf(districtAssign[d.abbr] || d.winner);
+      const p = partyOf(d.winner);
       const chip = document.createElement("button");
       chip.className="split-chip";
       chip.style.background = p ? p.color : "var(--map-empty)";
-      chip.title = `${d.abbr} (1 EV, congressional district)`;
-      chip.innerHTML = `${d.abbr} <span class="n">1 EV</span>`;
-      chip.addEventListener("click", ()=>{ districtAssign[d.abbr]=nextPartyId(districtAssign[d.abbr]||d.winner); save(); renderAll(); });
-      chip.addEventListener("contextmenu", e=>{ e.preventDefault(); districtAssign[d.abbr]=d.winner; save(); renderAll(); });
+      chip.title = `${d.id} (${d.ev} EV, congressional district)`;
+      chip.innerHTML = `${d.id} <span class="n">${d.ev} EV</span>`;
+      chip.addEventListener("click", ()=>{ d.winner=nextPartyId(d.winner); save(); renderAll(); });
+      chip.addEventListener("contextmenu", e=>{ e.preventDefault(); d.winner=(assignments[stateAbbr]&&assignments[stateAbbr].party)||parties[0].id; save(); renderAll(); });
       splitRow.appendChild(chip);
     });
   });
@@ -514,12 +532,11 @@ function statesCarried(partyId){
     if(abbr==="DC"){ if(won) extras.push("DC"); return; }
     if(won) count++;
   });
-  Object.entries(SPLIT_DISTRICTS).forEach(([abbr, sd])=>{
+  Object.entries(districtStates).forEach(([abbr, sd])=>{
     if(included[abbr]===false) return;
     const stateWinner = assignments[abbr] && assignments[abbr].party;
     sd.districts.forEach(d=>{
-      const p = districtAssign[d.abbr] || d.winner;
-      if(p===partyId && p!==stateWinner) extras.push(d.abbr.replace("-","-0"));
+      if(d.winner===partyId && d.winner!==stateWinner) extras.push(d.id.replace("-","-0"));
     });
   });
   return {count, extras};
@@ -630,11 +647,14 @@ function renderEvEditorView(c){
   const list = document.createElement("div"); list.className="ev-edit-list";
   STATES.slice().sort((a,b)=>a[0].localeCompare(b[0])).forEach(s=>{
     const abbr = s[1];
+    const split = districtStates[abbr];
     const row = document.createElement("div"); row.className="ev-edit-row";
-    const name = document.createElement("span"); name.className="ev-edit-name"; name.textContent = s[0];
+    const name = document.createElement("span"); name.className="ev-edit-name";
+    name.textContent = s[0] + (split ? " (districts)" : "");
     const slider = document.createElement("input");
     slider.type="range"; slider.min="0"; slider.max="60"; slider.value=evOf(abbr);
     slider.className="ev-slider";
+    if(split){ slider.disabled = true; slider.title="Total is derived from its district split — edit that state's districts in the map's State Detail panel instead."; }
     const val = document.createElement("span"); val.className="ev-edit-val mono"; val.textContent = evOf(abbr);
     slider.addEventListener("input", e=>{ val.textContent = e.target.value; });
     slider.addEventListener("change", e=>{ evOverrides[abbr] = +e.target.value; save(); renderAll(); });
@@ -655,15 +675,99 @@ function renderPresidentRight(){
     hd.querySelector(".close-x").addEventListener("click", ()=>{ selectedState=null; renderAll(); });
     card.appendChild(hd);
 
-    const evLabel = document.createElement("div"); evLabel.className="field-label"; evLabel.textContent="Electoral Votes";
-    card.appendChild(evLabel);
-    const evInput = document.createElement("input");
-    evInput.className="ev-input"; evInput.type="number"; evInput.min="0"; evInput.value=evOf(s[1]);
-    evInput.addEventListener("change", e=>{
-      const v = Math.max(0, parseInt(e.target.value)||0);
-      evOverrides[s[1]] = v; save(); renderAll();
+    const abbr = s[1];
+    const split = districtStates[abbr];
+
+    if(!split){
+      const evLabel = document.createElement("div"); evLabel.className="field-label"; evLabel.textContent="Electoral Votes";
+      card.appendChild(evLabel);
+      const evInput = document.createElement("input");
+      evInput.className="ev-input"; evInput.type="number"; evInput.min="0"; evInput.value=evOf(abbr);
+      evInput.addEventListener("change", e=>{
+        const v = Math.max(0, parseInt(e.target.value)||0);
+        evOverrides[abbr] = v; save(); renderAll();
+      });
+      card.appendChild(evInput);
+    }
+
+    const distLabel = document.createElement("div"); distLabel.className="field-label"; distLabel.textContent="Congressional Districts";
+    card.appendChild(distLabel);
+    const distRow = document.createElement("div"); distRow.className="toggle-row";
+    distRow.innerHTML = `<span>Split EVs by district (like Maine/Nebraska)</span>
+      <label class="switch"><input type="checkbox" ${split?"checked":""}><span class="slider"></span></label>`;
+    distRow.querySelector("input").addEventListener("change", e=>{
+      if(e.target.checked){
+        const totalEv = evOf(abbr);
+        const winner = (assignments[abbr]&&assignments[abbr].party) || parties[0].id;
+        districtStates[abbr] = {atLargeEv: Math.max(0,totalEv-1), districts:[{id:`${abbr}-1`, ev:1, winner}]};
+      } else {
+        evOverrides[abbr] = evOf(abbr); // preserve the total instead of silently reverting to the real default
+        delete districtStates[abbr];
+      }
+      save(); renderAll();
     });
-    card.appendChild(evInput);
+    card.appendChild(distRow);
+
+    if(split){
+      const atLargeLabel = document.createElement("div"); atLargeLabel.className="field-label"; atLargeLabel.textContent="At-Large EV (goes to the winner below)";
+      card.appendChild(atLargeLabel);
+      const atLargeInput = document.createElement("input");
+      atLargeInput.className="ev-input"; atLargeInput.type="number"; atLargeInput.min="0"; atLargeInput.value=split.atLargeEv;
+      atLargeInput.addEventListener("change", e=>{ split.atLargeEv = Math.max(0, parseInt(e.target.value)||0); save(); renderAll(); });
+      card.appendChild(atLargeInput);
+
+      split.districts.forEach((d,i)=>{
+        const dCard = document.createElement("div");
+        dCard.style.cssText = "margin-top:10px; padding:8px; border:1px solid var(--line); border-radius:8px";
+        const dHd = document.createElement("div");
+        dHd.style.cssText = "display:flex; justify-content:space-between; align-items:center; margin-bottom:6px";
+        dHd.innerHTML = `<span style="font-weight:700; font-size:.82rem">${escapeAttr(d.id)}</span>`;
+        const rm = document.createElement("button"); rm.className="icon-btn"; rm.textContent="×"; rm.title="Remove district";
+        rm.addEventListener("click", ()=>{
+          split.districts.splice(i,1);
+          if(split.districts.length===0){
+            evOverrides[abbr] = split.atLargeEv;
+            delete districtStates[abbr];
+          }
+          save(); renderAll();
+        });
+        dHd.appendChild(rm);
+        dCard.appendChild(dHd);
+
+        const idInput = document.createElement("input");
+        idInput.className="ev-input"; idInput.type="text"; idInput.value=d.id; idInput.style.marginBottom="6px";
+        idInput.addEventListener("change", e=>{ d.id = e.target.value || d.id; save(); renderAll(); });
+        dCard.appendChild(idInput);
+
+        const evInput = document.createElement("input");
+        evInput.className="ev-input"; evInput.type="number"; evInput.min="0"; evInput.value=d.ev; evInput.style.marginBottom="6px";
+        evInput.addEventListener("change", e=>{ d.ev = Math.max(0, parseInt(e.target.value)||0); save(); renderAll(); });
+        dCard.appendChild(evInput);
+
+        const dGrid = document.createElement("div"); dGrid.className="assign-grid";
+        parties.forEach(p=>{
+          const b = document.createElement("button");
+          const picked = d.winner===p.id;
+          b.className="assign-btn"+(picked?" picked":"");
+          if(picked) b.style.background=p.color;
+          b.textContent = p.abbr;
+          b.addEventListener("click", ()=>{ d.winner=p.id; save(); renderAll(); });
+          dGrid.appendChild(b);
+        });
+        dCard.appendChild(dGrid);
+        card.appendChild(dCard);
+      });
+
+      const addBtn = document.createElement("button");
+      addBtn.className="add-party-btn"; addBtn.style.marginTop="8px"; addBtn.textContent="+ Add district";
+      addBtn.addEventListener("click", ()=>{
+        const n = split.districts.length+1;
+        const winner = (assignments[abbr]&&assignments[abbr].party) || parties[0].id;
+        split.districts.push({id:`${abbr}-${n}`, ev:1, winner});
+        save(); renderAll();
+      });
+      card.appendChild(addBtn);
+    }
 
     const incLabel = document.createElement("div"); incLabel.className="field-label"; incLabel.textContent="Participation";
     card.appendChild(incLabel);
@@ -679,7 +783,7 @@ function renderPresidentRight(){
     note.textContent = "Excluding a state removes its EVs, House delegation, and Senate seats from every tab's totals.";
     card.appendChild(note);
 
-    const assignLabel = document.createElement("div"); assignLabel.className="field-label"; assignLabel.textContent="Assign winner";
+    const assignLabel = document.createElement("div"); assignLabel.className="field-label"; assignLabel.textContent=split?"At-large winner":"Assign winner";
     card.appendChild(assignLabel);
     const grid = document.createElement("div"); grid.className="assign-grid";
     parties.forEach(p=>{

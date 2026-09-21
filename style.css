@@ -121,6 +121,7 @@ path.leader-line{fill:none !important; stroke:var(--ink); stroke-width:1.6; stro
 .ev-edit-row{display:grid; grid-template-columns:150px 1fr 34px; align-items:center; gap:12px; padding:7px 2px; border-bottom:1px solid var(--line)}
 .ev-edit-name{font-size:.85rem}
 .ev-slider{width:100%; accent-color:var(--accent)}
+.ev-slider:disabled{opacity:.4; cursor:not-allowed}
 .ev-edit-val{text-align:right; font-weight:700; font-size:.9rem}
 
 .split-votes{display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; justify-content:center}
