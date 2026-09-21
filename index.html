@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Electoral Map Studio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A fully customizable electoral map builder: real 2024 data by default, editable parties, electoral votes, states, House, and Senate, with 12th Amendment contingent-election simulators.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Electoral Map Studio</h1>
+  <span class="tag">Real 2024 result loaded &middot; fully editable</span>
+  <div class="tabs" id="tabs">
+    <button class="tab-btn active" data-tab="president">President</button>
+    <button class="tab-btn" data-tab="house">House</button>
+    <button class="tab-btn" data-tab="senate">Senate</button>
+  </div>
+</header>
+
+<main>
+  <div class="side left" id="sideLeft"></div>
+  <div class="center" id="center"></div>
+  <div class="side right" id="sideRight"></div>
+</main>
+<div class="footer-note">
+  Data starts from the real, certified 2024 presidential result and current Senate composition &mdash; paint over it to build any scenario.
+  State shapes: <a href="https://commons.wikimedia.org/wiki/File:Blank_US_Map_(states_only).svg" style="color:inherit">public-domain Wikimedia US map</a>.
+  Your edits stay in this browser only (localStorage), per device.
+</div>
+
+<script src="state_paths.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
