@@ -328,6 +328,31 @@ function renderPresidentLeft(){
   wrap.appendChild(reset);
 }
 
+// A bounding-box center often lands outside a concave/elongated shape (Florida's peninsula,
+// Michigan's split, Louisiana's boot) — this instead finds the point closest to that ideal
+// center that's actually still inside the drawn shape, using the browser's own fill-hit-testing
+// rather than any hand-rolled polygon math.
+function findLabelPoint(shape, bbox){
+  const cx0 = bbox.x + bbox.width/2, cy0 = bbox.y + bbox.height/2;
+  const inside = (x,y)=>{
+    try{ return shape.isPointInFill(new DOMPoint(x,y)); }
+    catch(e){ return true; } // isPointInFill unsupported — trust the naive center instead
+  };
+  if(inside(cx0,cy0)) return [cx0,cy0];
+  const steps = 16;
+  let best=null, bestD=Infinity;
+  for(let i=0;i<=steps;i++){
+    for(let j=0;j<=steps;j++){
+      const x = bbox.x + bbox.width*i/steps;
+      const y = bbox.y + bbox.height*j/steps;
+      if(!inside(x,y)) continue;
+      const d = (x-cx0)*(x-cx0) + (y-cy0)*(y-cy0);
+      if(d<bestD){ bestD=d; best=[x,y]; }
+    }
+  }
+  return best || [cx0,cy0];
+}
+
 function applyStateVisual(el, abbr){
   const inc = included[abbr] !== false;
   el.classList.toggle("excluded", !inc);
@@ -347,7 +372,7 @@ function renderPresidentCenter(){
   c.appendChild(renderTally("president"));
 
   const toggle = document.createElement("div"); toggle.className="view-toggle";
-  [["map","Map"],["summary","Summary"]].forEach(([id,label])=>{
+  [["map","Map"],["summary","Summary"],["evedit","Adjust EVs"]].forEach(([id,label])=>{
     const b = document.createElement("button");
     b.className="view-toggle-btn"+(presidentView===id?" active":"");
     b.textContent = label;
@@ -357,6 +382,7 @@ function renderPresidentCenter(){
   c.appendChild(toggle);
 
   if(presidentView==="summary"){ renderSummaryView(c); return; }
+  if(presidentView==="evedit"){ renderEvEditorView(c); return; }
   renderMapView(c);
 }
 
@@ -431,8 +457,9 @@ function renderMapView(c){
     let cx, cy;
     try{
       const bbox = shape.getBBox();
-      cx = bbox.x + bbox.width/2; cy = bbox.y + bbox.height/2;
-    }catch(e){ return; } // shape not rendered (e.g. hidden/zero-size) — skip its label
+      if(bbox.width<=0 || bbox.height<=0) return; // zero-size/hidden — skip its label
+      [cx, cy] = findLabelPoint(shape, bbox);
+    }catch(e){ return; }
 
     if(CALLOUT_STATES.includes(abbr)){
       const ly = CALLOUT_Y0 + calloutI*CALLOUT_DY; calloutI++;
@@ -590,6 +617,37 @@ function renderSummaryView(c){
   }
 
   c.appendChild(box);
+}
+
+function renderEvEditorView(c){
+  const wrap = document.createElement("div"); wrap.className="card ev-editor";
+
+  const hd = document.createElement("div"); hd.className="ev-editor-hd";
+  const totalEv = STATES.reduce((sum,s)=>sum+evOf(s[1]),0);
+  hd.innerHTML = `<h3 style="margin:0">Adjust Electoral Votes</h3><span class="mono">Total: ${totalEv}</span>`;
+  wrap.appendChild(hd);
+
+  const resetBtn = document.createElement("button");
+  resetBtn.className="scenario-btn"; resetBtn.textContent="Reset all to real apportionment";
+  resetBtn.addEventListener("click", ()=>{ evOverrides={}; save(); renderAll(); });
+  wrap.appendChild(resetBtn);
+
+  const list = document.createElement("div"); list.className="ev-edit-list";
+  STATES.slice().sort((a,b)=>a[0].localeCompare(b[0])).forEach(s=>{
+    const abbr = s[1];
+    const row = document.createElement("div"); row.className="ev-edit-row";
+    const name = document.createElement("span"); name.className="ev-edit-name"; name.textContent = s[0];
+    const slider = document.createElement("input");
+    slider.type="range"; slider.min="0"; slider.max="60"; slider.value=evOf(abbr);
+    slider.className="ev-slider";
+    const val = document.createElement("span"); val.className="ev-edit-val mono"; val.textContent = evOf(abbr);
+    slider.addEventListener("input", e=>{ val.textContent = e.target.value; });
+    slider.addEventListener("change", e=>{ evOverrides[abbr] = +e.target.value; save(); renderAll(); });
+    row.appendChild(name); row.appendChild(slider); row.appendChild(val);
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
+  c.appendChild(wrap);
 }
 
 function renderPresidentRight(){
