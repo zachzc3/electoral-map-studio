@@ -43,6 +43,10 @@ const SPLIT_DISTRICTS = {
   NE: {stateEv:2, districts:[{abbr:"NE-1",winner:"R"},{abbr:"NE-2",winner:"D"},{abbr:"NE-3",winner:"R"}]}
 };
 const DC_HIT = {cx:801.6, cy:252.1, r:7};
+// Small Northeast states are too tiny on a real map to hold their own EV number legibly,
+// so they get a leader line out to a stacked label in the open Atlantic instead (north to south).
+const CALLOUT_STATES = ["NH","VT","MA","RI","CT","NJ","DE","MD","DC"];
+const CALLOUT_X = 878, CALLOUT_Y0 = 140, CALLOUT_DY = 24;
 
 /* ============================== STATE ============================== */
 let parties = [
@@ -297,6 +301,8 @@ function renderPresidentCenter(){
     el.addEventListener("dblclick", ()=>{ selectedState = abbr; renderAll(); });
   }
 
+  const shapeByAbbr = {};
+
   STATES.forEach(s=>{
     const abbr = s[1];
     if(abbr==="DC") return; // DC drawn separately as a hit-circle below
@@ -310,6 +316,7 @@ function renderPresidentCenter(){
     applyStateVisual(path, abbr);
     wireHandlers(path, abbr);
     svg.appendChild(path);
+    shapeByAbbr[abbr] = path;
   });
 
   // DC: draw its (tiny) real path plus a bigger invisible-ish hit circle so it's actually clickable
@@ -326,9 +333,47 @@ function renderPresidentCenter(){
   applyStateVisual(dcHit, "DC");
   wireHandlers(dcHit, "DC");
   svg.appendChild(dcHit);
+  shapeByAbbr.DC = dcHit;
 
   wrap.appendChild(svg);
-  c.appendChild(wrap);
+  c.appendChild(wrap); // must be in the live DOM before getBBox() below will return real numbers
+
+  // Electoral-vote labels: inline on the shape for normal-sized states, on a leader line
+  // out to a stacked callout for the small Northeast cluster that can't fit a legible number.
+  const labelLayer = document.createElementNS(SVG_NS,"g");
+  labelLayer.setAttribute("class","map-labels");
+  let calloutI = 0;
+  STATES.forEach(s=>{
+    const abbr = s[1];
+    const shape = shapeByAbbr[abbr];
+    if(!shape) return;
+    let cx, cy;
+    try{
+      const bbox = shape.getBBox();
+      cx = bbox.x + bbox.width/2; cy = bbox.y + bbox.height/2;
+    }catch(e){ return; } // shape not rendered (e.g. hidden/zero-size) — skip its label
+
+    if(CALLOUT_STATES.includes(abbr)){
+      const ly = CALLOUT_Y0 + calloutI*CALLOUT_DY; calloutI++;
+      const line = document.createElementNS(SVG_NS,"line");
+      line.setAttribute("x1",cx); line.setAttribute("y1",cy);
+      line.setAttribute("x2",CALLOUT_X-24); line.setAttribute("y2",ly);
+      line.setAttribute("class","leader-line");
+      labelLayer.appendChild(line);
+      const text = document.createElementNS(SVG_NS,"text");
+      text.setAttribute("x",CALLOUT_X); text.setAttribute("y",ly);
+      text.setAttribute("class","ev-label callout-label");
+      text.textContent = `${abbr} ${evOf(abbr)}`;
+      labelLayer.appendChild(text);
+    } else {
+      const text = document.createElementNS(SVG_NS,"text");
+      text.setAttribute("x",cx); text.setAttribute("y",cy);
+      text.setAttribute("class","ev-label");
+      text.textContent = evOf(abbr);
+      labelLayer.appendChild(text);
+    }
+  });
+  svg.appendChild(labelLayer);
 
   // Split-vote callout row (Maine / Nebraska congressional districts)
   const splitRow = document.createElement("div"); splitRow.className="split-votes";

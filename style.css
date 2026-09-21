@@ -76,6 +76,15 @@ svg.usmap path.selected{stroke:#fff; stroke-width:2.5}
 svg.usmap circle.dc-hit{cursor:pointer; stroke:#0d1117; stroke-width:1}
 svg.usmap circle.dc-hit.excluded{fill:none; stroke:var(--muted-2); stroke-dasharray:2 1}
 
+.map-labels{pointer-events:none}
+.ev-label{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-weight:600; font-size:11px;
+  fill:#fff; stroke:#0d1117; stroke-width:2.5px; paint-order:stroke; stroke-linejoin:round;
+  text-anchor:middle; dominant-baseline:central;
+}
+.leader-line{stroke:var(--muted-2); stroke-width:1}
+.callout-label{text-anchor:start}
+
 .split-votes{display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; justify-content:center}
 .split-chip{padding:6px 10px; border-radius:8px; border:1px solid var(--line); cursor:pointer; font-size:.75rem; font-weight:700; color:#fff; display:flex; align-items:center; gap:5px}
 .split-chip .n{opacity:.85; font-weight:500}
