@@ -42,16 +42,42 @@ const SPLIT_DISTRICTS = {
   ME: {stateEv:2, districts:[{abbr:"ME-1",winner:"D"},{abbr:"ME-2",winner:"R"}]},
   NE: {stateEv:2, districts:[{abbr:"NE-1",winner:"R"},{abbr:"NE-2",winner:"D"},{abbr:"NE-3",winner:"R"}]}
 };
-const DC_HIT = {cx:801.6, cy:252.1, r:7};
-// Small Northeast states are too tiny on a real map to hold their own EV number legibly,
-// so they get a leader line out to a stacked label in the open Atlantic instead (north to south).
-const CALLOUT_STATES = ["NH","VT","MA","RI","CT","NJ","DE","MD","DC"];
-const CALLOUT_X = 878, CALLOUT_Y0 = 140, CALLOUT_DY = 24;
+const MAP_VIEWBOX = "0 0 1020 593";
+// Hand-placed label positions (and, for the 9 small Northeast states, a combined "XX N"
+// callout position instead) lifted from a cleanly hand-drawn reference map, rather than
+// computed — a curated position beats any generic centering algorithm.
+const LABEL_POS = {
+  AK:{x:110,y:504,callout:false}, AL:{x:641,y:422,callout:false}, AR:{x:534,y:384,callout:false},
+  AZ:{x:182,y:368,callout:false}, CA:{x:55,y:298,callout:false}, CO:{x:297.22601,y:281.55011,callout:false},
+  FL:{x:743,y:505,callout:false}, GA:{x:697,y:419,callout:false}, HI:{x:261,y:565,callout:false},
+  IA:{x:513,y:224,callout:false}, ID:{x:183,y:162,callout:false}, IL:{x:579,y:261,callout:false},
+  IN:{x:630,y:262,callout:false}, KS:{x:434,y:303,callout:false}, KY:{x:666,y:311,callout:false},
+  LA:{x:536,y:452,callout:false}, ME:{x:874,y:110,callout:false}, MI:{x:645,y:193,callout:false},
+  MN:{x:484,y:129,callout:false}, MO:{x:525,y:306,callout:false}, MS:{x:587,y:428,callout:false},
+  MT:{x:270,y:100,callout:false}, NC:{x:763,y:342,callout:false}, ND:{x:405,y:103,callout:false},
+  NE:{x:411,y:232,callout:false}, NM:{x:290,y:381,callout:false}, NV:{x:120,y:242,callout:false},
+  NY:{x:798,y:167,callout:false}, OH:{x:685,y:248,callout:false}, OK:{x:451,y:370,callout:false},
+  OR:{x:88,y:136,callout:false}, PA:{x:764,y:220,callout:false}, SC:{x:745,y:380,callout:false},
+  SD:{x:405,y:170,callout:false}, TN:{x:633,y:353,callout:false}, TX:{x:410,y:458,callout:false},
+  UT:{x:209,y:265,callout:false}, VA:{x:767,y:294,callout:false}, WA:{x:105,y:62,callout:false},
+  WI:{x:561,y:163,callout:false}, WV:{x:730,y:281,callout:false}, WY:{x:290,y:191,callout:false},
+  CT:{x:918,y:228,callout:true}, DC:{x:864,y:327,callout:true}, DE:{x:891,y:284,callout:true},
+  MA:{x:927,y:164,callout:true}, MD:{x:883,y:305,callout:true}, NH:{x:800,y:58,callout:true},
+  NJ:{x:898,y:260,callout:true}, RI:{x:925,y:199,callout:true}, VT:{x:790,y:82,callout:true},
+};
+// The two congressional districts that visually diverge from their state's own color in a
+// typical 2024 map — drawn as a small inset circle right on the shape, same as the reference.
+const SPLIT_INSET = {
+  ME:{district:"ME-2", cx:889, cy:66, r:14, labelX:880, labelY:75},
+  NE:{district:"NE-2", cx:457, cy:236, r:14, labelX:448, labelY:245},
+};
+// One path, drawn once, containing every small-state leader line as its own subpath.
+const LEADER_LINES_D = "m844 62 13 29m-25-5 8 17m49 50 34 3m-41 22 41 12m-57-6 51 33m-72 13 50 22m-58-2 51 26m-55-15 46 33m-79-43 61 61";
 
 /* ============================== STATE ============================== */
 let parties = [
-  {id:"D", name:"Democratic", abbr:"D", color:"#3b82c4", nominee:"Kamala Harris", runningMate:"Tim Walz", homeState:"California", popularVotes:75017613},
-  {id:"R", name:"Republican", abbr:"R", color:"#c4453b", nominee:"Donald Trump", runningMate:"JD Vance", homeState:"Florida", popularVotes:77302580},
+  {id:"D", name:"Democratic", abbr:"D", color:"#698DC5", nominee:"Kamala Harris", runningMate:"Tim Walz", homeState:"California", popularVotes:75017613},
+  {id:"R", name:"Republican", abbr:"R", color:"#F07763", nominee:"Donald Trump", runningMate:"JD Vance", homeState:"Florida", popularVotes:77302580},
   {id:"I", name:"Independent", abbr:"I", color:"#8b7ab8", nominee:"", runningMate:"", homeState:"", popularVotes:null}
 ];
 let electionMeta = {
@@ -328,31 +354,6 @@ function renderPresidentLeft(){
   wrap.appendChild(reset);
 }
 
-// A bounding-box center often lands outside a concave/elongated shape (Florida's peninsula,
-// Michigan's split, Louisiana's boot) — this instead finds the point closest to that ideal
-// center that's actually still inside the drawn shape, using the browser's own fill-hit-testing
-// rather than any hand-rolled polygon math.
-function findLabelPoint(shape, bbox){
-  const cx0 = bbox.x + bbox.width/2, cy0 = bbox.y + bbox.height/2;
-  const inside = (x,y)=>{
-    try{ return shape.isPointInFill(new DOMPoint(x,y)); }
-    catch(e){ return true; } // isPointInFill unsupported — trust the naive center instead
-  };
-  if(inside(cx0,cy0)) return [cx0,cy0];
-  const steps = 16;
-  let best=null, bestD=Infinity;
-  for(let i=0;i<=steps;i++){
-    for(let j=0;j<=steps;j++){
-      const x = bbox.x + bbox.width*i/steps;
-      const y = bbox.y + bbox.height*j/steps;
-      if(!inside(x,y)) continue;
-      const d = (x-cx0)*(x-cx0) + (y-cy0)*(y-cy0);
-      if(d<bestD){ bestD=d; best=[x,y]; }
-    }
-  }
-  return best || [cx0,cy0];
-}
-
 function applyStateVisual(el, abbr){
   const inc = included[abbr] !== false;
   el.classList.toggle("excluded", !inc);
@@ -389,7 +390,7 @@ function renderPresidentCenter(){
 function renderMapView(c){
   const wrap = document.createElement("div"); wrap.className="mapwrap";
   const svg = document.createElementNS(SVG_NS,"svg");
-  svg.setAttribute("viewBox","0 0 959 593");
+  svg.setAttribute("viewBox",MAP_VIEWBOX);
   svg.setAttribute("class","usmap");
 
   function wireHandlers(el, abbr){
@@ -408,11 +409,8 @@ function renderMapView(c){
     el.addEventListener("dblclick", ()=>{ selectedState = abbr; renderAll(); });
   }
 
-  const shapeByAbbr = {};
-
   STATES.forEach(s=>{
     const abbr = s[1];
-    if(abbr==="DC") return; // DC drawn separately as a hit-circle below
     const d = STATE_PATHS[abbr];
     if(!d) return;
     const path = document.createElementNS(SVG_NS,"path");
@@ -423,67 +421,58 @@ function renderMapView(c){
     applyStateVisual(path, abbr);
     wireHandlers(path, abbr);
     svg.appendChild(path);
-    shapeByAbbr[abbr] = path;
   });
 
-  // DC: draw its (tiny) real path plus a bigger invisible-ish hit circle so it's actually clickable
-  const dcPath = document.createElementNS(SVG_NS,"path");
-  dcPath.setAttribute("d", STATE_PATHS.DC || "");
-  applyStateVisual(dcPath, "DC");
-  svg.appendChild(dcPath);
-  const dcHit = document.createElementNS(SVG_NS,"circle");
-  dcHit.setAttribute("cx", DC_HIT.cx); dcHit.setAttribute("cy", DC_HIT.cy); dcHit.setAttribute("r", DC_HIT.r);
-  dcHit.setAttribute("class","dc-hit");
-  const dcTitle = document.createElementNS(SVG_NS,"title");
-  dcTitle.textContent = `District of Columbia — ${evOf("DC")} EV`;
-  dcHit.appendChild(dcTitle);
-  applyStateVisual(dcHit, "DC");
-  wireHandlers(dcHit, "DC");
-  svg.appendChild(dcHit);
-  shapeByAbbr.DC = dcHit;
+  // Leader lines for the small Northeast cluster — one static decorative path, hand-drawn
+  // to connect each of those states to its callout label position below.
+  const leaderLines = document.createElementNS(SVG_NS,"path");
+  leaderLines.setAttribute("d", LEADER_LINES_D);
+  leaderLines.setAttribute("class","leader-line");
+  leaderLines.setAttribute("fill","none");
+  svg.appendChild(leaderLines);
 
-  wrap.appendChild(svg);
-  c.appendChild(wrap); // must be in the live DOM before getBBox() below will return real numbers
-
-  // Electoral-vote labels: inline on the shape for normal-sized states, on a leader line
-  // out to a stacked callout for the small Northeast cluster that can't fit a legible number.
+  // Electoral-vote labels at hand-placed positions: inline on the shape for normal-sized
+  // states, or as a combined "XX N" callout label for the small Northeast cluster.
   const labelLayer = document.createElementNS(SVG_NS,"g");
   labelLayer.setAttribute("class","map-labels");
-  let calloutI = 0;
   STATES.forEach(s=>{
     const abbr = s[1];
-    const shape = shapeByAbbr[abbr];
-    if(!shape) return;
-    let cx, cy;
-    try{
-      const bbox = shape.getBBox();
-      if(bbox.width<=0 || bbox.height<=0) return; // zero-size/hidden — skip its label
-      [cx, cy] = findLabelPoint(shape, bbox);
-    }catch(e){ return; }
-
-    if(CALLOUT_STATES.includes(abbr)){
-      const ly = CALLOUT_Y0 + calloutI*CALLOUT_DY; calloutI++;
-      const line = document.createElementNS(SVG_NS,"line");
-      line.setAttribute("x1",cx); line.setAttribute("y1",cy);
-      line.setAttribute("x2",CALLOUT_X-24); line.setAttribute("y2",ly);
-      line.setAttribute("class","leader-line");
-      labelLayer.appendChild(line);
-      const text = document.createElementNS(SVG_NS,"text");
-      text.setAttribute("x",CALLOUT_X); text.setAttribute("y",ly);
-      text.setAttribute("class","ev-label callout-label");
-      text.textContent = `${abbr} ${evOf(abbr)}`;
-      labelLayer.appendChild(text);
-    } else {
-      const text = document.createElementNS(SVG_NS,"text");
-      text.setAttribute("x",cx); text.setAttribute("y",cy);
-      text.setAttribute("class","ev-label");
-      text.textContent = evOf(abbr);
-      labelLayer.appendChild(text);
-    }
+    const pos = LABEL_POS[abbr];
+    if(!pos) return;
+    const text = document.createElementNS(SVG_NS,"text");
+    text.setAttribute("x",pos.x); text.setAttribute("y",pos.y);
+    text.setAttribute("class","ev-label"+(pos.callout?" callout-label":""));
+    text.textContent = pos.callout ? `${abbr} ${evOf(abbr)}` : evOf(abbr);
+    labelLayer.appendChild(text);
   });
-  svg.appendChild(labelLayer);
 
-  // Split-vote callout row (Maine / Nebraska congressional districts)
+  // Congressional-district insets (Maine's 2nd, Nebraska's 2nd) — the only two districts a
+  // typical map draws separately, since the rest always match their state's own color.
+  Object.entries(SPLIT_INSET).forEach(([stateAbbr, inset])=>{
+    const circle = document.createElementNS(SVG_NS,"circle");
+    circle.setAttribute("cx",inset.cx); circle.setAttribute("cy",inset.cy); circle.setAttribute("r",inset.r);
+    circle.setAttribute("class","district-inset");
+    const p = partyOf(districtAssign[inset.district] || SPLIT_DISTRICTS[stateAbbr].districts.find(d=>d.abbr===inset.district).winner);
+    if(p) circle.style.fill = p.color;
+    const dTitle = document.createElementNS(SVG_NS,"title");
+    dTitle.textContent = `${inset.district} — 1 EV (congressional district)`;
+    circle.appendChild(dTitle);
+    circle.addEventListener("click", ()=>{ districtAssign[inset.district]=nextPartyId(districtAssign[inset.district]); save(); renderAll(); });
+    circle.addEventListener("contextmenu", e=>{ e.preventDefault(); delete districtAssign[inset.district]; save(); renderAll(); });
+    svg.appendChild(circle);
+    const dLabel = document.createElementNS(SVG_NS,"text");
+    dLabel.setAttribute("x",inset.labelX); dLabel.setAttribute("y",inset.labelY);
+    dLabel.setAttribute("class","ev-label district-inset-label");
+    dLabel.textContent = "1";
+    labelLayer.appendChild(dLabel);
+  });
+
+  svg.appendChild(labelLayer);
+  wrap.appendChild(svg);
+  c.appendChild(wrap);
+
+  // Split-vote controls (Maine / Nebraska congressional districts) — full editable list;
+  // only ME-2/NE-2 also get a visual inset on the map above, same as a typical results map.
   const splitRow = document.createElement("div"); splitRow.className="split-votes";
   Object.entries(SPLIT_DISTRICTS).forEach(([stateAbbr, sd])=>{
     sd.districts.forEach(d=>{
@@ -502,7 +491,7 @@ function renderMapView(c){
 
   const dbl = document.createElement("div");
   dbl.style.cssText="text-align:center;color:var(--muted-2);font-size:.78rem;margin-top:10px";
-  dbl.textContent = "Maine and Nebraska each award 2 at-large votes to the statewide winner, plus 1 per congressional district (chips above) — double-click a state on the map to edit its electoral votes or include/exclude it.";
+  dbl.textContent = "Maine and Nebraska each award 2 at-large votes to the statewide winner, plus 1 per congressional district (dots on the map, or chips above) — double-click a state to edit its electoral votes or include/exclude it.";
   c.appendChild(dbl);
 }
 
@@ -585,7 +574,7 @@ function renderSummaryView(c){
   // small non-interactive map thumbnail
   const thumbWrap = document.createElement("div"); thumbWrap.className="infobox-map";
   const svg = document.createElementNS(SVG_NS,"svg");
-  svg.setAttribute("viewBox","0 0 959 593");
+  svg.setAttribute("viewBox",MAP_VIEWBOX);
   STATES.forEach(s=>{
     const abbr = s[1];
     const d = STATE_PATHS[abbr]; if(!d) return;
