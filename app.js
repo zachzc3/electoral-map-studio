@@ -50,7 +50,7 @@ let parties = [
   {id:"R", name:"Republican", abbr:"R", color:"#c4453b"},
   {id:"I", name:"Independent", abbr:"I", color:"#8b7ab8"}
 ];
-let brushParty = "D", brushStrength = "safe";
+let brushStrength = "safe";
 let assignments = {};    // abbr -> {party, strength}
 let districtAssign = {}; // "ME-1" etc -> partyId
 let evOverrides = {};
@@ -103,6 +103,13 @@ function evOf(abbr){
   return evOverrides[abbr] != null ? evOverrides[abbr] : s[2];
 }
 function partyOf(id){ return parties.find(p=>p.id===id); }
+// Cycles to the next party after curId in the current party list, wrapping around;
+// with no current assignment, starts at the first party.
+function nextPartyId(curId){
+  if(!parties.length) return null;
+  const idx = curId ? parties.findIndex(p=>p.id===curId) : -1;
+  return parties[(idx+1) % parties.length].id;
+}
 function escapeAttr(s){ return String(s).replace(/"/g,"&quot;"); }
 
 /* ============================== TABS ============================== */
@@ -132,7 +139,6 @@ function renderPartyManager(){
     row.querySelector(".icon-btn").addEventListener("click", ()=>{
       if(parties.length<=1) return;
       parties = parties.filter(x=>x.id!==p.id);
-      if(brushParty===p.id) brushParty = parties[0].id;
       save(); renderAll();
     });
     el.appendChild(row);
@@ -227,22 +233,10 @@ function renderPresidentLeft(){
   const wrap = document.getElementById("sideLeft"); wrap.innerHTML="";
   const brush = document.createElement("div"); brush.className="card";
   brush.innerHTML = `<h3>Paint Brush</h3>`;
-  const chips = document.createElement("div"); chips.className="brush-parties";
-  parties.forEach(p=>{
-    const c = document.createElement("button");
-    c.className="brush-chip"; c.textContent=p.abbr; c.title=p.name;
-    c.style.background = brushParty===p.id ? p.color : "var(--panel-2)";
-    c.style.color = brushParty===p.id ? "#fff" : "var(--muted)";
-    c.style.borderColor = brushParty===p.id ? p.color : "var(--line)";
-    c.addEventListener("click", ()=>{ brushParty=p.id; renderPresidentLeft(); });
-    chips.appendChild(c);
-  });
-  brush.appendChild(chips);
   const srow = document.createElement("div"); srow.className="strength-row";
   STRENGTHS.forEach(st=>{
     const b = document.createElement("button");
     b.className="strength-btn"+(brushStrength===st?" active":"");
-    b.style.setProperty("--picked", partyOf(brushParty)?.color || "var(--accent)");
     b.textContent = STRENGTH_LABEL[st];
     b.addEventListener("click", ()=>{ brushStrength=st; renderPresidentLeft(); });
     srow.appendChild(b);
@@ -250,7 +244,7 @@ function renderPresidentLeft(){
   brush.appendChild(srow);
   const hint = document.createElement("div");
   hint.style.cssText="font-size:.78rem;color:var(--muted);margin-top:10px";
-  hint.textContent = "Click a state to paint it, right-click to clear it, double-click for details.";
+  hint.textContent = "Click a state to cycle its winner through your parties, right-click to clear it, double-click for details.";
   brush.appendChild(hint);
   wrap.appendChild(brush);
   wrap.appendChild(renderPartyManager());
@@ -290,7 +284,8 @@ function renderPresidentCenter(){
   function wireHandlers(el, abbr){
     el.addEventListener("click", ()=>{
       if(included[abbr]===false) return;
-      assignments[abbr] = {party:brushParty, strength:brushStrength};
+      const cur = assignments[abbr];
+      assignments[abbr] = {party:nextPartyId(cur && cur.party), strength:brushStrength};
       save(); renderAll();
     });
     el.addEventListener("contextmenu", e=>{
@@ -345,7 +340,7 @@ function renderPresidentCenter(){
       chip.style.background = p ? p.color : "var(--map-empty)";
       chip.title = `${d.abbr} (1 EV, congressional district)`;
       chip.innerHTML = `${d.abbr} <span class="n">1 EV</span>`;
-      chip.addEventListener("click", ()=>{ districtAssign[d.abbr]=brushParty; save(); renderAll(); });
+      chip.addEventListener("click", ()=>{ districtAssign[d.abbr]=nextPartyId(districtAssign[d.abbr]||d.winner); save(); renderAll(); });
       chip.addEventListener("contextmenu", e=>{ e.preventDefault(); districtAssign[d.abbr]=d.winner; save(); renderAll(); });
       splitRow.appendChild(chip);
     });
@@ -433,19 +428,9 @@ function renderHouseLeft(){
   const wrap = document.getElementById("sideLeft"); wrap.innerHTML="";
   const brush = document.createElement("div"); brush.className="card";
   brush.innerHTML = `<h3>Assign Delegation</h3>`;
-  const chips = document.createElement("div"); chips.className="brush-parties";
-  parties.forEach(p=>{
-    const c = document.createElement("button");
-    c.className="brush-chip"; c.textContent=p.abbr; c.title=p.name;
-    c.style.background = brushParty===p.id ? p.color : "var(--panel-2)";
-    c.style.color = brushParty===p.id ? "#fff" : "var(--muted)";
-    c.addEventListener("click", ()=>{ brushParty=p.id; renderHouseLeft(); });
-    chips.appendChild(c);
-  });
-  brush.appendChild(chips);
   const hint = document.createElement("div");
-  hint.style.cssText="font-size:.78rem;color:var(--muted);margin-top:8px";
-  hint.textContent = "Click a state to give its whole delegation's 1 vote to the selected party.";
+  hint.style.cssText="font-size:.78rem;color:var(--muted)";
+  hint.textContent = "Click a state to cycle its whole delegation's 1 vote through your parties.";
   brush.appendChild(hint);
   wrap.appendChild(brush);
   wrap.appendChild(renderPartyManager());
@@ -468,7 +453,7 @@ function renderHouseCenter(){
     const p = inc ? partyOf(houseAssign[abbr]) : null;
     if(p) { cell.style.background=p.color; cell.style.color="#fff"; }
     cell.innerHTML = `<span class="abbr">${abbr}</span><span class="n">${s[3]} seats</span>`;
-    cell.addEventListener("click", ()=>{ if(inc){ houseAssign[abbr]=brushParty; save(); renderAll(); } });
+    cell.addEventListener("click", ()=>{ if(inc){ houseAssign[abbr]=nextPartyId(houseAssign[abbr]); save(); renderAll(); } });
     grid.appendChild(cell);
   });
   c.appendChild(grid);
@@ -493,19 +478,9 @@ function renderSenateLeft(){
   const wrap = document.getElementById("sideLeft"); wrap.innerHTML="";
   const brush = document.createElement("div"); brush.className="card";
   brush.innerHTML = `<h3>Assign Seat</h3>`;
-  const chips = document.createElement("div"); chips.className="brush-parties";
-  parties.forEach(p=>{
-    const c = document.createElement("button");
-    c.className="brush-chip"; c.textContent=p.abbr; c.title=p.name;
-    c.style.background = brushParty===p.id ? p.color : "var(--panel-2)";
-    c.style.color = brushParty===p.id ? "#fff" : "var(--muted)";
-    c.addEventListener("click", ()=>{ brushParty=p.id; renderSenateLeft(); });
-    chips.appendChild(c);
-  });
-  brush.appendChild(chips);
   const hint = document.createElement("div");
-  hint.style.cssText="font-size:.78rem;color:var(--muted);margin-top:8px";
-  hint.textContent = "Click a seat to assign it, right-click to clear it.";
+  hint.style.cssText="font-size:.78rem;color:var(--muted)";
+  hint.textContent = "Click a seat to cycle it through your parties, right-click to clear it.";
   brush.appendChild(hint);
   wrap.appendChild(brush);
   wrap.appendChild(renderPartyManager());
@@ -552,7 +527,7 @@ function renderSenateCenter(){
       if(p){ seat.style.background=p.color; }
       seat.title = s[0]+" seat "+(i+1);
       seat.textContent = abbr;
-      seat.addEventListener("click", ()=>{ senateAssign[key]=brushParty; save(); renderAll(); });
+      seat.addEventListener("click", ()=>{ senateAssign[key]=nextPartyId(senateAssign[key]); save(); renderAll(); });
       seat.addEventListener("contextmenu", e=>{ e.preventDefault(); delete senateAssign[key]; save(); renderAll(); });
       grid.appendChild(seat);
     }
