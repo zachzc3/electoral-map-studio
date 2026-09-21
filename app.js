@@ -50,10 +50,18 @@ const CALLOUT_X = 878, CALLOUT_Y0 = 140, CALLOUT_DY = 24;
 
 /* ============================== STATE ============================== */
 let parties = [
-  {id:"D", name:"Democratic", abbr:"D", color:"#3b82c4"},
-  {id:"R", name:"Republican", abbr:"R", color:"#c4453b"},
-  {id:"I", name:"Independent", abbr:"I", color:"#8b7ab8"}
+  {id:"D", name:"Democratic", abbr:"D", color:"#3b82c4", nominee:"Kamala Harris", runningMate:"Tim Walz", homeState:"California", popularVotes:75017613},
+  {id:"R", name:"Republican", abbr:"R", color:"#c4453b", nominee:"Donald Trump", runningMate:"JD Vance", homeState:"Florida", popularVotes:77302580},
+  {id:"I", name:"Independent", abbr:"I", color:"#8b7ab8", nominee:"", runningMate:"", homeState:"", popularVotes:null}
 ];
+let electionMeta = {
+  title: "2024 United States presidential election",
+  date: "November 5, 2024",
+  turnoutPct: 64.3,
+  priorNominee: "Joe Biden",
+  priorParty: "D"
+};
+let presidentView = "map"; // "map" | "summary"
 let brushStrength = "safe";
 let assignments = {};    // abbr -> {party, strength}
 let districtAssign = {}; // "ME-1" etc -> partyId
@@ -93,12 +101,20 @@ function loadSaved(){
     const d = JSON.parse(raw);
     parties=d.parties; assignments=d.assignments; districtAssign=d.districtAssign||{};
     evOverrides=d.evOverrides; included=d.included; houseAssign=d.houseAssign; senateAssign=d.senateAssign;
+    // backward-compatible: older saves won't have these fields yet
+    parties.forEach(p=>{
+      if(p.nominee==null) p.nominee="";
+      if(p.runningMate==null) p.runningMate="";
+      if(p.homeState==null) p.homeState="";
+      if(p.popularVotes===undefined) p.popularVotes=null;
+    });
+    electionMeta = Object.assign({}, electionMeta, d.electionMeta||{});
     return true;
   }catch(e){ return false; }
 }
 function save(){
   try{
-    localStorage.setItem("electoral_studio_v2", JSON.stringify({parties,assignments,districtAssign,evOverrides,included,houseAssign,senateAssign}));
+    localStorage.setItem("electoral_studio_v2", JSON.stringify({parties,assignments,districtAssign,evOverrides,included,houseAssign,senateAssign,electionMeta}));
   }catch(e){}
 }
 
@@ -159,6 +175,55 @@ function renderPartyManager(){
     });
     el.appendChild(add);
   }
+  return el;
+}
+
+// Optional per-party/global fields that only matter for the Wikipedia-style Summary view —
+// left blank they simply don't appear there, and the map/tallies work fine without them.
+function renderCandidateDetails(){
+  const el = document.createElement("div"); el.className="card";
+  el.innerHTML = `<h3>Candidate Details <span style="text-transform:none;font-weight:500">(for Summary view)</span></h3>`;
+
+  const mkField = (labelText, value, onChange, type)=>{
+    const wrap = document.createElement("div");
+    const lab = document.createElement("div"); lab.className="field-label"; lab.style.margin="8px 0 4px"; lab.textContent=labelText;
+    const inp = document.createElement("input");
+    inp.className="ev-input"; inp.type=type||"text"; inp.value = value==null?"":value;
+    inp.addEventListener("change", e=>{ onChange(type==="number" ? (e.target.value===""?null:+e.target.value) : e.target.value); save(); renderAll(); });
+    wrap.appendChild(lab); wrap.appendChild(inp);
+    el.appendChild(wrap);
+  };
+
+  mkField("Election title", electionMeta.title, v=>electionMeta.title=v);
+  mkField("Date", electionMeta.date, v=>electionMeta.date=v);
+  mkField("Turnout %", electionMeta.turnoutPct, v=>electionMeta.turnoutPct=v, "number");
+
+  parties.forEach(p=>{
+    const hd = document.createElement("div");
+    hd.style.cssText = "margin-top:14px;font-weight:700;font-size:.85rem;display:flex;align-items:center;gap:6px";
+    hd.innerHTML = `<span class="dot" style="background:${p.color}"></span>${escapeAttr(p.name)}`;
+    el.appendChild(hd);
+    mkField("Nominee", p.nominee, v=>p.nominee=v);
+    mkField("Running mate", p.runningMate, v=>p.runningMate=v);
+    mkField("Home state", p.homeState, v=>p.homeState=v);
+    mkField("Popular votes", p.popularVotes, v=>p.popularVotes=v, "number");
+  });
+
+  mkField("Prior winner's name", electionMeta.priorNominee, v=>electionMeta.priorNominee=v);
+  const priorLabel = document.createElement("div"); priorLabel.className="field-label"; priorLabel.style.margin="8px 0 4px"; priorLabel.textContent="Prior winner's party";
+  el.appendChild(priorLabel);
+  const priorGrid = document.createElement("div"); priorGrid.className="assign-grid";
+  parties.forEach(p=>{
+    const b = document.createElement("button");
+    const picked = electionMeta.priorParty===p.id;
+    b.className="assign-btn"+(picked?" picked":"");
+    if(picked) b.style.background=p.color;
+    b.textContent = p.abbr;
+    b.addEventListener("click", ()=>{ electionMeta.priorParty=p.id; save(); renderAll(); });
+    priorGrid.appendChild(b);
+  });
+  el.appendChild(priorGrid);
+
   return el;
 }
 
@@ -252,6 +317,7 @@ function renderPresidentLeft(){
   brush.appendChild(hint);
   wrap.appendChild(brush);
   wrap.appendChild(renderPartyManager());
+  wrap.appendChild(renderCandidateDetails());
   const reset = document.createElement("button");
   reset.className="reset-btn"; reset.textContent="Reset to Real 2024 Result";
   reset.addEventListener("click", ()=>{
@@ -280,6 +346,21 @@ function renderPresidentCenter(){
   const c = document.getElementById("center"); c.innerHTML="";
   c.appendChild(renderTally("president"));
 
+  const toggle = document.createElement("div"); toggle.className="view-toggle";
+  [["map","Map"],["summary","Summary"]].forEach(([id,label])=>{
+    const b = document.createElement("button");
+    b.className="view-toggle-btn"+(presidentView===id?" active":"");
+    b.textContent = label;
+    b.addEventListener("click", ()=>{ presidentView=id; renderAll(); });
+    toggle.appendChild(b);
+  });
+  c.appendChild(toggle);
+
+  if(presidentView==="summary"){ renderSummaryView(c); return; }
+  renderMapView(c);
+}
+
+function renderMapView(c){
   const wrap = document.createElement("div"); wrap.className="mapwrap";
   const svg = document.createElementNS(SVG_NS,"svg");
   svg.setAttribute("viewBox","0 0 959 593");
@@ -396,6 +477,119 @@ function renderPresidentCenter(){
   dbl.style.cssText="text-align:center;color:var(--muted-2);font-size:.78rem;margin-top:10px";
   dbl.textContent = "Maine and Nebraska each award 2 at-large votes to the statewide winner, plus 1 per congressional district (chips above) — double-click a state on the map to edit its electoral votes or include/exclude it.";
   c.appendChild(dbl);
+}
+
+// Mirrors how Wikipedia's own election infoboxes phrase "states carried": states won outright,
+// plus DC and any congressional district picked up separately from that state's at-large winner
+// (e.g. Trump: "31 + ME-02", Harris: "19 + DC + NE-02" in the real 2024 box).
+function statesCarried(partyId){
+  let count = 0; const extras = [];
+  STATES.forEach(s=>{
+    const abbr = s[1];
+    if(included[abbr]===false) return;
+    const a = assignments[abbr];
+    const won = a && a.party===partyId;
+    if(abbr==="DC"){ if(won) extras.push("DC"); return; }
+    if(won) count++;
+  });
+  Object.entries(SPLIT_DISTRICTS).forEach(([abbr, sd])=>{
+    if(included[abbr]===false) return;
+    const stateWinner = assignments[abbr] && assignments[abbr].party;
+    sd.districts.forEach(d=>{
+      const p = districtAssign[d.abbr] || d.winner;
+      if(p===partyId && p!==stateWinner) extras.push(d.abbr.replace("-","-0"));
+    });
+  });
+  return {count, extras};
+}
+
+function fmtNum(n){ return n==null ? null : n.toLocaleString("en-US"); }
+
+function renderSummaryView(c){
+  const {totals} = computeTally("president");
+  const ranked = parties.slice().sort((a,b)=>(totals[b.id]||0)-(totals[a.id]||0)).filter(p=>(totals[p.id]||0)>0);
+  const shown = ranked.slice(0,4);
+  const totalVotes = shown.reduce((sum,p)=>sum+(p.popularVotes||0),0);
+
+  const box = document.createElement("div"); box.className="infobox";
+
+  const title = document.createElement("div"); title.className="infobox-title"; title.textContent = electionMeta.title || "Election Results";
+  box.appendChild(title);
+  if(electionMeta.date){ const d = document.createElement("div"); d.className="infobox-date"; d.textContent=electionMeta.date; box.appendChild(d); }
+
+  const {grandTotal} = computeTally("president");
+  const majority = Math.floor(grandTotal/2)+1;
+  const meta1 = document.createElement("div"); meta1.className="infobox-meta";
+  meta1.innerHTML = `${grandTotal} members of the Electoral College<br>${majority} electoral votes needed to win`;
+  box.appendChild(meta1);
+  if(electionMeta.turnoutPct!=null && electionMeta.turnoutPct!==""){
+    const t = document.createElement("div"); t.className="infobox-meta"; t.textContent=`Turnout: ${electionMeta.turnoutPct}%`;
+    box.appendChild(t);
+  }
+
+  const badges = document.createElement("div"); badges.className="infobox-badges";
+  shown.forEach(p=>{
+    const b = document.createElement("div"); b.className="infobox-badge"; b.style.background=p.color;
+    b.textContent = p.abbr;
+    badges.appendChild(b);
+  });
+  box.appendChild(badges);
+
+  const rows = [
+    ["Nominee", p=>p.nominee],
+    ["Party", p=>p.name],
+    ["Home state", p=>p.homeState],
+    ["Running mate", p=>p.runningMate],
+    ["Electoral vote", p=>String(totals[p.id]||0)],
+    ["States carried", p=>{ const {count, extras} = statesCarried(p.id); return count + (extras.length? " + "+extras.join(" + ") : ""); }],
+    ["Popular vote", p=>fmtNum(p.popularVotes)],
+    ["Percentage", p=>(p.popularVotes && totalVotes) ? ((p.popularVotes/totalVotes*100).toFixed(1)+"%") : null],
+  ];
+  const table = document.createElement("table"); table.className="infobox-table";
+  rows.forEach(([label, fn])=>{
+    const vals = shown.map(fn);
+    if(vals.every(v=>!v)) return; // skip rows nobody filled in
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<th>${label}</th>` + vals.map(v=>`<td>${v||"—"}</td>`).join("");
+    table.appendChild(tr);
+  });
+  box.appendChild(table);
+
+  // small non-interactive map thumbnail
+  const thumbWrap = document.createElement("div"); thumbWrap.className="infobox-map";
+  const svg = document.createElementNS(SVG_NS,"svg");
+  svg.setAttribute("viewBox","0 0 959 593");
+  STATES.forEach(s=>{
+    const abbr = s[1];
+    const d = STATE_PATHS[abbr]; if(!d) return;
+    const path = document.createElementNS(SVG_NS,"path");
+    path.setAttribute("d", d);
+    const inc = included[abbr]!==false;
+    const a = assignments[abbr]; const p = inc && a && partyOf(a.party);
+    path.setAttribute("fill", p ? p.color : "var(--map-empty)");
+    path.setAttribute("stroke","#0d1117"); path.setAttribute("stroke-width","1");
+    svg.appendChild(path);
+  });
+  thumbWrap.appendChild(svg);
+  const legend = document.createElement("div"); legend.className="infobox-legend";
+  shown.forEach(p=>{
+    const item = document.createElement("span");
+    item.innerHTML = `<span class="dot" style="background:${p.color}"></span>${escapeAttr(p.name)}`;
+    legend.appendChild(item);
+  });
+  thumbWrap.appendChild(legend);
+  box.appendChild(thumbWrap);
+
+  if(electionMeta.priorNominee || shown.length){
+    const winner = shown[0];
+    const footTable = document.createElement("table"); footTable.className="infobox-table infobox-footer";
+    footTable.innerHTML = `<tr><th>President before election</th><th>Elected President</th></tr>
+      <tr><td>${electionMeta.priorNominee || "—"}<br>${partyOf(electionMeta.priorParty)?.name || ""}</td>
+          <td>${winner ? (winner.nominee || winner.name) : "—"}<br>${winner ? winner.name : ""}</td></tr>`;
+    box.appendChild(footTable);
+  }
+
+  c.appendChild(box);
 }
 
 function renderPresidentRight(){
